@@ -1,0 +1,7 @@
+# 自定义 GitHub 仓库列表
+# 在此添加除默认仓库之外需要统计的仓库
+# 默认已包含：openRuyi-Project/openRuyi, openRuyi-Project/homepage
+
+repos:
+  # - org/repo
+  # example: openRuyi-Project/openRuyi

@@ -1,6 +1,6 @@
 """GitHub contribution provider backed by the `gh` CLI."""
 
-import calendar
+import datetime
 import json
 import subprocess
 import time
@@ -17,7 +17,7 @@ def _gh(*args: str, retries: int = _RETRY_COUNT) -> Any:
     """Run `gh` with the given arguments and return parsed JSON.
 
     Retries up to *retries* times on transient errors (EOF / network failures).
-    Raises ``subprocess.CalledProcessError`` or ``RuntimeError`` on final failure.
+    Raises ``subprocess.CalledProcessError`` on HTTP errors (no retry).
     """
     cmd = ["gh"] + list(args)
     last_exc: Exception | None = None
@@ -30,8 +30,7 @@ def _gh(*args: str, retries: int = _RETRY_COUNT) -> Any:
                 check=True,
             )
             return json.loads(result.stdout) if result.stdout.strip() else {}
-        except subprocess.CalledProcessError as exc:
-            # gh exits non-zero on HTTP errors; re-raise immediately
+        except subprocess.CalledProcessError:
             raise
         except (json.JSONDecodeError, OSError) as exc:
             last_exc = exc
@@ -40,10 +39,8 @@ def _gh(*args: str, retries: int = _RETRY_COUNT) -> Any:
     raise RuntimeError(f"gh command failed after {retries} attempts: {cmd}") from last_exc
 
 
-def _gh_search_prs(query: str) -> list[dict]:
-    """Run a GitHub Search query and return all matching issue/PR items,
-    handling pagination automatically (up to 1000 results, 100 per page).
-    """
+def _gh_search(query: str) -> list[dict]:
+    """Run a GitHub Search query and return all matching items (auto-paginated)."""
     items: list[dict] = []
     page = 1
     while True:
@@ -61,29 +58,21 @@ def _gh_search_prs(query: str) -> list[dict]:
     return items
 
 
-def _fetch_pr_commits(org: str, repo: str, pr_number: int, merged: bool) -> list[CommitRecord]:
-    """Fetch all commits for a PR, returning CommitRecord list.
+def _date_range_str(start: datetime.date, end: datetime.date) -> str:
+    return f"{start.isoformat()}..{end.isoformat()}"
 
-    Merged PR commits link to /commit/{sha};
-    open/unmerged PR commits link to /pull/{n}/commits/{sha}.
-    """
-    data = _gh(
-        "api",
-        f"repos/{org}/{repo}/pulls/{pr_number}/commits",
-        "--paginate",
-    )
-    # --paginate concatenates multiple JSON arrays; gh returns one array here
+
+def _fetch_pr_commits(org: str, repo: str, pr_number: int, merged: bool) -> list[CommitRecord]:
+    """Fetch all commits for a PR."""
+    data = _gh("api", f"repos/{org}/{repo}/pulls/{pr_number}/commits", "--paginate")
     if isinstance(data, dict):
-        # single-page result wrapped as dict (shouldn't happen for this endpoint)
-        data = data.get("items", [])
+        data = []
 
     records: list[CommitRecord] = []
     for commit in data:
         sha = commit.get("sha", "")
         sha7 = sha[:7]
-        msg_full = commit.get("commit", {}).get("message", "")
-        # Use only the first line of the commit message
-        message = msg_full.split("\n")[0].strip()
+        message = commit.get("commit", {}).get("message", "").split("\n")[0].strip()
         if merged:
             url = f"https://github.com/{org}/{repo}/commit/{sha}"
         else:
@@ -93,17 +82,13 @@ def _fetch_pr_commits(org: str, repo: str, pr_number: int, merged: bool) -> list
 
 
 def _fetch_closing_issues(org: str, repo: str, pr_number: int) -> list[IssueRecord]:
-    """Return issues that will be closed when this PR is merged (via GraphQL)."""
+    """Return issues closed by this PR via GraphQL."""
     query = """
 query($owner: String!, $repo: String!, $pr: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
       closingIssuesReferences(first: 50) {
-        nodes {
-          number
-          title
-          url
-        }
+        nodes { number title url }
       }
     }
   }
@@ -147,41 +132,38 @@ class GithubGhProvider(Provider):
             state="merged" if merged else item.get("state", "open"),
             commits=commits,
             closing_issues=closing,
-            approved=not merged,  # approved-open PRs are flagged True
+            approved=not merged,
         )
 
-    def get_merged_prs(self, username: str, year: int, month: int) -> list[PRRecord]:
-        last_day = calendar.monthrange(year, month)[1]
-        date_range = f"{year}-{month:02d}-01..{year}-{month:02d}-{last_day:02d}"
+    def get_merged_prs(
+        self, username: str, start: datetime.date, end: datetime.date
+    ) -> list[PRRecord]:
+        dr = _date_range_str(start, end)
         query = (
             f"repo:{self._full_repo} is:pr author:{username} "
-            f"is:merged merged:{date_range}"
+            f"is:merged merged:{dr}"
         )
-        items = _gh_search_prs(query)
+        items = _gh_search(query)
         return [self._build_pr(item, merged=True) for item in items]
 
     def get_approved_open_prs(self, username: str) -> list[PRRecord]:
-        """Return open PRs by *username* that have at least one approval.
-
-        These represent "未合并 PR" in the report — PRs stuck in the approval
-        queue (e.g. repo freeze) but already reviewed and approved.
-        No date filter: we want the current approval queue state.
-        """
+        """Open PRs by *username* that have been approved (未合并 PR)."""
         query = (
             f"repo:{self._full_repo} is:pr author:{username} "
             f"is:open review:approved"
         )
-        items = _gh_search_prs(query)
+        items = _gh_search(query)
         return [self._build_pr(item, merged=False) for item in items]
 
-    def get_created_issues(self, username: str, year: int, month: int) -> list[IssueRecord]:
-        last_day = calendar.monthrange(year, month)[1]
-        date_range = f"{year}-{month:02d}-01..{year}-{month:02d}-{last_day:02d}"
+    def get_created_issues(
+        self, username: str, start: datetime.date, end: datetime.date
+    ) -> list[IssueRecord]:
+        dr = _date_range_str(start, end)
         query = (
             f"repo:{self._full_repo} is:issue author:{username} "
-            f"created:{date_range}"
+            f"created:{dr}"
         )
-        items = _gh_search_prs(query)  # same search endpoint, different type filter
+        items = _gh_search(query)
         return [
             IssueRecord(
                 number=item["number"],
