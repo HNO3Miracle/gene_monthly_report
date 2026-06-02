@@ -1,6 +1,6 @@
 # gene_monthly_report
 
-自动生成 openRuyi-Project 系列仓库个人贡献月报，输出格式对齐 [example.md](https://github.com/openRuyi-Project/contributions/blob/master/example.md)。
+一个自动生成 openRuyi intern 月报的工具。
 
 ## 环境要求
 
