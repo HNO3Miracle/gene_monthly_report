@@ -3,5 +3,6 @@
 # 默认已包含：openRuyi-Project/openRuyi, openRuyi-Project/homepage
 
 repos:
-  # - org/repo
-  # example: openRuyi-Project/openRuyi
+  # - org/repo 
+  # example: 
+  # - openRuyi-Project/openRuyi
