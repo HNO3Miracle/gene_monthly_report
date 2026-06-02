@@ -110,6 +110,15 @@ def load_repos() -> list[str]:
     if CUSTOM_REPOS_FILE.exists():
         data = yaml.safe_load(CUSTOM_REPOS_FILE.read_text(encoding="utf-8")) or {}
         raw = data.get("repos") or []
+        # Accept both a proper list and a bare scalar (user forgot the "- " prefix)
+        if isinstance(raw, str):
+            import sys
+            print(
+                f"⚠️  {CUSTOM_REPOS_FILE.name}: 'repos' 应为列表，"
+                f"收到字符串 {raw!r}。请在每行前加 '- '。",
+                file=sys.stderr,
+            )
+            raw = [raw]
         extra = [r for r in raw if isinstance(r, str) and r.strip()]
 
     # Merge: defaults first, then extras (deduplicated, preserving order)
