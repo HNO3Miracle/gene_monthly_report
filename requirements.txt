@@ -1,0 +1,2 @@
+# No third-party dependencies — uses only Python stdlib + gh CLI
+# Python >= 3.10 required (uses X | Y union type syntax)
