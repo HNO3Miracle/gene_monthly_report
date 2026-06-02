@@ -4,6 +4,7 @@ import datetime
 import json
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from report_gen.models import CommitRecord, IssueRecord, PRRecord
@@ -120,11 +121,20 @@ class GithubGhProvider(Provider):
         self._full_repo = f"{org}/{repo}"
 
     def _build_pr(self, item: dict, merged: bool) -> PRRecord:
+        """Build a PRRecord for a single PR, fetching commits and closing issues."""
         number = item["number"]
-        commits = _fetch_pr_commits(self.org, self.repo, number, merged=merged)
-        closing: list[IssueRecord] = []
-        if merged:
-            closing = _fetch_closing_issues(self.org, self.repo, number)
+        # Fetch commits and closing issues concurrently for each PR
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fut_commits = ex.submit(
+                _fetch_pr_commits, self.org, self.repo, number, merged
+            )
+            fut_closing = ex.submit(
+                _fetch_closing_issues, self.org, self.repo, number
+            ) if merged else None
+
+            commits = fut_commits.result()
+            closing: list[IssueRecord] = fut_closing.result() if fut_closing else []
+
         return PRRecord(
             number=number,
             title=item.get("title", ""),
@@ -135,6 +145,24 @@ class GithubGhProvider(Provider):
             approved=not merged,
         )
 
+    def _build_prs_concurrent(self, items: list[dict], merged: bool) -> list[PRRecord]:
+        """Build PRRecords for all items concurrently (one thread per PR)."""
+        if not items:
+            return []
+        # Cap workers to avoid hammering the API; 8 is a reasonable ceiling
+        workers = min(len(items), 8)
+        results: dict[int, PRRecord] = {}
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(self._build_pr, item, merged): i
+                for i, item in enumerate(items)
+            }
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                results[idx] = fut.result()
+        # Restore original order
+        return [results[i] for i in range(len(items))]
+
     def get_merged_prs(
         self, username: str, start: datetime.date, end: datetime.date
     ) -> list[PRRecord]:
@@ -144,7 +172,7 @@ class GithubGhProvider(Provider):
             f"is:merged merged:{dr}"
         )
         items = _gh_search(query)
-        return [self._build_pr(item, merged=True) for item in items]
+        return self._build_prs_concurrent(items, merged=True)
 
     def get_approved_open_prs(self, username: str) -> list[PRRecord]:
         """Open PRs by *username* that have been approved (未合并 PR)."""
@@ -153,7 +181,7 @@ class GithubGhProvider(Provider):
             f"is:open review:approved"
         )
         items = _gh_search(query)
-        return [self._build_pr(item, merged=False) for item in items]
+        return self._build_prs_concurrent(items, merged=False)
 
     def get_created_issues(
         self, username: str, start: datetime.date, end: datetime.date
