@@ -222,3 +222,5 @@ __marimo__/
 *.md
 
 .claude/
+
+custom_github_repos.yml
