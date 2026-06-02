@@ -65,46 +65,37 @@ RepoData = dict[str, dict[str, list]]
 
 
 def _render_merged_section(repo_data: RepoData) -> list[str]:
-    """Render '#### 已合并 PR' section, split by repo with ##### headings."""
-    lines: list[str] = []
-    lines.append("#### 已合并 PR")
-    lines.append("")
+    """Render '#### 已合并 PR' section; omit entirely if nothing to show."""
+    # Collect only repos that have merged PRs
+    non_empty = [(repo, data["merged"]) for repo, data in repo_data.items() if data["merged"]]
+    if not non_empty:
+        return []
 
-    has_any = any(d["merged"] for d in repo_data.values())
-
-    for repo, data in repo_data.items():
-        prs = data["merged"]
+    lines: list[str] = ["#### 已合并 PR", ""]
+    for repo, prs in non_empty:
         lines.append(f"##### {repo}")
         lines.append("")
         lines.extend(_table_header_merged())
-        if prs:
-            for pr in prs:
-                lines.append(_pr_row_merged(pr))
-        else:
-            lines.append("| 无 |  |  |  |  |")
+        for pr in prs:
+            lines.append(_pr_row_merged(pr))
         lines.append("")
-
     return lines
 
 
 def _render_open_section(repo_data: RepoData) -> list[str]:
-    """Render '#### 未合并 PR' section, split by repo."""
-    lines: list[str] = []
-    lines.append("#### 未合并 PR")
-    lines.append("")
+    """Render '#### 未合并 PR' section; omit entirely if nothing to show."""
+    non_empty = [(repo, data["open"]) for repo, data in repo_data.items() if data["open"]]
+    if not non_empty:
+        return []
 
-    for repo, data in repo_data.items():
-        prs = data["open"]
+    lines: list[str] = ["#### 未合并 PR", ""]
+    for repo, prs in non_empty:
         lines.append(f"##### {repo}")
         lines.append("")
         lines.extend(_table_header_open())
-        if prs:
-            for pr in prs:
-                lines.append(_pr_row_open(pr))
-        else:
-            lines.append("| 无 |  |  |  |  |  |")
+        for pr in prs:
+            lines.append(_pr_row_open(pr))
         lines.append("")
-
     return lines
 
 
