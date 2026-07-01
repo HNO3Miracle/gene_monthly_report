@@ -8,6 +8,7 @@ class CommitRecord:
     sha7: str       # first 7 characters of commit SHA
     message: str    # first line of commit message
     url: str
+    author_email: str = ""
 
 
 @dataclass
